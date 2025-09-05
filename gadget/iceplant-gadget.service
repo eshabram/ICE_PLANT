@@ -1,0 +1,12 @@
+[Unit]
+Description=ICE_PLANT USB Composite Gadget (ECM+ACM)
+After=local-fs.target sys-kernel-config.mount
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/iceplant/usb-gadget.sh
+
+[Install]
+WantedBy=multi-user.target
