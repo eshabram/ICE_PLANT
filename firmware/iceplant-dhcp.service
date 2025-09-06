@@ -1,0 +1,12 @@
+[Unit]
+Description=ICE_PLANT minimal DHCP server for usb0
+After=iceplant-gadget.service sys-subsystem-net-devices-usb0.device
+Requires=iceplant-gadget.service sys-subsystem-net-devices-usb0.device
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/iceplant/dhcpd.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

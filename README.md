@@ -3,29 +3,21 @@
 ## Setting Up RPi Zero 2 w
 Download Raspberry Pi imager software and burn a Raspberry Pi OS Lite (64 bit) image to your drive. 
 
-When the imager is done, it will automatically eject the sd. Reinsert it and add the `usb-gadget.sh` and `iceplant-gadget.service` located in the `gadget/` dir in this repository to the bootfs directory. If you are on mac, run this from the root of the repo:
+When the imager is done, it will automatically eject the sd. Reinsert it and add the `usb-gadget.sh` and `iceplant-gadget.service` located in the `firmware/` dir in this repository to the bootfs directory. If you are on mac, run this from the root of the repo:
 ```bash
-sudo cp gadget/* /Volumes/bootfs/
+cp firmware/* /Volumes/bootfs/
 ```
+
 Once completed, you'll have to hook up a screen and keyboard and log into the device to enable a service and edit some files. 
 
-Once logged in, copy the script and service files to their respective locations and enable the service:
+Once logged in, run this script to setup the service and serial console login:
 ```bash
-sudo mkdir -p /opt/iceplant
-sudo mv /boot/firmware/usb-gadget.sh /opt/iceplant/
-sudo chmod +x /opt/iceplant/usb-gadget.sh
-sudo mv /boot/firmware/iceplant-gadget.service /etc/systemd/system/
-sudo systemctl enable iceplant-gadget.service
+sudo chmod +x /boot/firmware/setup.sh
+sudo /boot/firmware/setup.sh
 ```
+The service should be enabled but not running. It will start automatically on reboot after you edit some files
 
-Run this command to enable console login from serial:
-```bash
-sudo systemctl enable serial-getty@ttyGS0.service
-# and check with this command
-sudo systemctl status serial-getty@ttyGS0.service
-```
-
-Then open and edit the `/boot/firmware/config.txt` by adding this line at the bottom:
+Next, open and edit the `/boot/firmware/config.txt` by adding this line at the bottom:
 ```sh
 dtoverlay=dwc2
 ```
@@ -52,3 +44,59 @@ or install minicom:
 ```bash
 sudo minicom -D /dev/tty.usbmodemICEPLANT_00013 -b 115200
 ```
+
+Lastly, on you mac find the respective interface (something like en8 or 9 maybe) and run this:
+```bash
+sudo ifconfig en9 inet 192.168.7.1 netmask 255.255.255.0 up
+```
+
+NOTE: You may also have to change the order of service in network settings on mac. It might steal your connection and cause your internet connection to fail.
+
+CRITICAL! Turn off you VPN!
+
+## Setup WPA Wifi Connection:
+On the university network, WPA authentication is used for connecting to WiFi. That means signing on is tricky, and we'll need to provide our own `wpa_supplicant-wlan0.conf` file. If your system is up and running, then a template for one should have been copied over to the `/boot/firmware/` dir. mv it to the correct location and edit the file like this:
+```bash
+sudo cp /boot/firmware/wpa_supplicant-wlan0.conf /etc/wpa_supplicant/
+sudo nano /etc/wpa_supplicant.conf
+```
+Now you will need to add the SSID (networks name) and your credentials for the network. 
+
+There is a cert pointed to at the bottom of the conf that was copied in earlier from the `setup.sh` script. that contains the keys UC Davis eduroam network, so if another network is going to be used, then a pem will need to be acquired for that network, and the conf should be carefully edited to reflect the method of authentication. The hospital, for example, may not use WPA2 auth as the university does, and the process may be very different. 
+
+Once you have correctly configured the `wpa_supplicant-wlan0.conf`, you can run these commands to enable and start the service:
+```bash
+sudo systemctl enable wpa_supplicant@wlan0
+sudo systemctl start wpa_supplicant@wlan0
+```
+
+If the status shows good on the service running, then run this to ask for an ip on wlan0:
+```bash
+sudo dhclient wlan0
+ip addr show wlan0
+```
+
+To make sure that dhcp gets an IP for wlan0 automatical create this file:
+```bash
+sudo nano /etc/systemd/network/10-wlan0.network
+```
+
+and add this:
+```bash
+[Match]
+Name=wlan0
+
+[Network]
+DHCP=yes
+```
+
+and run these: 
+```bash
+sudo systemctl enable systemd-networkd
+sudo systemctl restart systemd-networkd
+sudo reboot
+```
+
+
+
+
