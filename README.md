@@ -26,6 +26,11 @@ Now open the `/boot/firmware/cmdline.txt` and add this after `rootwait` with spa
 ```sh
 modules-load=dwc2
 ```
+and to enable serial0 communication for our rs232 adapter, remove from the beginning of the file:
+```sh
+console=serial0,115200
+```
+
 
 Now shut the system down and plug into the computer. Windows users can simply locate the COM in a serial terminal app of their choice.
 
