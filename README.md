@@ -1,4 +1,5 @@
 # ICE_PLANT
+ICE_PLANT is a remote monitoring and data aquisition device designed to work with the Philips Series 50 fetal monitoring machine, sending data back to UC Davis [LEPS](http://lepsucd.com/). It functions as a dongle that can be remotely accessed while on an enterprise network. 
 
 ## Setting Up RPi Zero 2 w
 Download Raspberry Pi imager software and burn a Raspberry Pi OS Lite (64 bit) image to your drive. 
@@ -20,6 +21,7 @@ The service should be enabled but not running. It will start automatically on re
 Next, open and edit the `/boot/firmware/config.txt` by adding this line at the bottom:
 ```sh
 dtoverlay=dwc2
+enable_uart=1
 ```
 
 Now open the `/boot/firmware/cmdline.txt` and add this after `rootwait` with spaces. Be careful to not add new lines here because this is a command:
@@ -102,6 +104,9 @@ sudo systemctl restart systemd-networkd
 sudo reboot
 ```
 
-
-
-
+## Dependencies:
+Once the board has network connection, run this:
+```sh
+sudo apt update
+sudo apt install python3-serial
+```

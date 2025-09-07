@@ -1,0 +1,15 @@
+[Unit]
+Description=ICE_PLANT remote data collector for Philips Series 50 fetal monitoring device
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/ICE_PLANT
+ExecStart=/usr/bin/python3 /home/pi/ICE_PLANT/ice_plant.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
