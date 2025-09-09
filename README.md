@@ -58,7 +58,7 @@ CRITICAL! Turn off you VPN!
 On the university network, WPA authentication is used for connecting to WiFi. That means signing on is tricky, and we'll need to provide our own `wpa_supplicant-wlan0.conf` file. If your system is up and running, then a template for one should have been copied over to the `/boot/firmware/` dir. mv it to the correct location and edit the file like this:
 ```bash
 sudo cp /boot/firmware/wpa_supplicant-wlan0.conf /etc/wpa_supplicant/
-sudo nano /etc/wpa_supplicant.conf
+sudo nano /etc/wpa_supplicant-wlan0.conf
 ```
 Now you will need to add the SSID (networks name) and your credentials for the network. 
 
@@ -72,6 +72,7 @@ sudo systemctl start wpa_supplicant@wlan0
 
 If the status shows good on the service running, then run this to ask for an ip on wlan0:
 ```bash
+sudo rfkill unblock wifi # not always necessary
 sudo dhclient wlan0
 ip addr show wlan0
 ```
