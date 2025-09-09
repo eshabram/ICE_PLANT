@@ -77,9 +77,10 @@ sudo systemctl enable wpa_supplicant@wlan0
 sudo systemctl start wpa_supplicant@wlan0
 ```
 
+Open `raspi-config` and got to Localisation options -> L4 WLAN Count... and set your country. Otherwise, rfkill be soft block the wpa supplicant configuration. 
+
 If the status shows good on the service running, then run this to ask for an ip on wlan0:
 ```bash
-sudo rfkill unblock wifi # not always necessary
 sudo dhclient wlan0
 ip addr show wlan0
 ```
@@ -110,4 +111,11 @@ Once the board has network connection, run this:
 ```sh
 sudo apt update
 sudo apt install python3-serial
+```
+
+## Unlink Tailscale:
+```bash
+sudo systemctl stop tailscaled
+sudo tailscale logout
+sudo rm -rf /var/lib/tailscale/*
 ```
