@@ -113,7 +113,23 @@ sudo apt update
 sudo apt install python3-serial
 ```
 
-## Unlink Tailscale:
+## Tailscale:
+Tailscale is a VPN service that securely connects your devices into a private, peer-to-peer network using WireGuard, without manual firewall or port setup. It allows for remote managing and access of device, even in enterprise networks. 
+
+### Installation and setup:
+Run these commands to install and enable tailscale:
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo systemctl enable tailscaled
+sudo systemctl start tailscaled
+```
+
+When you are ready to sign into tailscale and add this device to your network, run this command and copy the link it produces into a browser:
+```bash
+sudo tailscale up
+```
+
+### Unlink
 ```bash
 sudo systemctl stop tailscaled
 sudo tailscale logout
