@@ -1,5 +1,5 @@
 # ICE_PLANT
-ICE_PLANT is a remote monitoring and data aquisition device designed to work with the Philips Series 50 fetal monitoring machine, sending data back to UC Davis [LEPS](http://lepsucd.com/). It functions as a dongle that can be remotely accessed while on an enterprise network. 
+ICE_PLANT is a remote monitoring and data aquisition device designed to work with the Corometrics 250cx fetal monitoring machine, sending data back to UC Davis [LEPS](http://lepsucd.com/). It functions as a dongle that can be remotely accessed while on an enterprise network. 
 
 ## Setting Up RPi Zero 2 w
 Download Raspberry Pi imager software and burn a Raspberry Pi OS Lite (64 bit) image to your drive. 

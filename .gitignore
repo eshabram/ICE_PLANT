@@ -1,6 +1,7 @@
-.DS_Store/
+**/*.DS_Store/
 /build/
-*.log
-*.tmp
-*.bak
+**/*.log
+**/*.tmp
+**/*.bak
 cert/
+**/*AGENTS.md
