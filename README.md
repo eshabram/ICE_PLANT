@@ -135,3 +135,32 @@ sudo systemctl stop tailscaled
 sudo tailscale logout
 sudo rm -rf /var/lib/tailscale/*
 ```
+
+## Debug Instructions
+Currently, the serial to TTL is working on the RPI. The Philips protocol uses 1200 baud, but the Corometrics default is 2400 baud. Use this quick check to see which baud is active:
+```sh
+stty -F /dev/serial0 -a # view current settings
+
+# Try 2400 first (default), then 1200 if nothing useful shows up.
+stty -F /dev/serial0 2400 cs8 -cstopb -parenb -crtscts raw -echo
+hexdump -C /dev/serial0
+
+stty -F /dev/serial0 1200 cs8 -cstopb -parenb -crtscts raw -echo
+hexdump -C /dev/serial0
+```
+OR if you have minicom installed, you could try:
+```sh
+minicom -D /dev/serial0 -b 2400
+minicom -D /dev/serial0 -b 1200
+```
+
+### Verify Framing (Philips-style blocks)
+The Philips framing uses DLE/STX at the start and DLE/ETX before the CRC.
+1) Capture a short burst at the working baud:
+```sh
+hexdump -C /dev/serial0 | head -n 50
+```
+2) Look for these byte patterns in the output:
+- Start of block: `10 02` (DLE STX)
+- End of block: `10 03` (DLE ETX), followed by 2 CRC bytes
+If you see `10 02 ... 10 03 xx xx` repeating, the framing matches.
