@@ -25,7 +25,7 @@ def crc_ccitt_bytes(data: bytes) -> bytes:
             if crc & 0x8000:
                 crc = (crc << 1) ^ POLY
             else:
-            crc <<= 1
+                crc <<= 1
             crc &= 0xFFFF
     return bytes([crc >> 8, crc & 0xFF])
 
