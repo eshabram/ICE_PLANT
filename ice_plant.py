@@ -110,9 +110,15 @@ def validate_frame(frame: bytes) -> Optional[bytes]:
     raw_payload = frame[2:-4]
     return unescape_payload(raw_payload)
 
+SERIAL_PORT = '/dev/serial0'
+SERIAL_BAUD = 1200
+
+def open_serial():
+    return serial.Serial(SERIAL_PORT, baudrate=SERIAL_BAUD, bytesize=8,
+                         parity='N', stopbits=1, timeout=1)
+
 # Open the serial port
-ser = serial.Serial('/dev/serial0', baudrate=1200, bytesize=8,
-                    parity='N', stopbits=1, timeout=1)
+ser = open_serial()
 
 # Build polling and go commands
 poll_cmd = build_block(b'?C')  # request CTG block
@@ -167,7 +173,17 @@ try:
     bad_frames = 0
     space_check_counter = 0
     while True:
-        data = ser.read(512)
+        try:
+            data = ser.read(512)
+        except serial.SerialException as exc:
+            print(f"Serial error: {exc}; retrying in 2s...")
+            try:
+                ser.close()
+            except Exception:
+                pass
+            time.sleep(2)
+            ser = open_serial()
+            continue
         if data:
             buffer.extend(data)
             for frame in extract_frames(buffer):
