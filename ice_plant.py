@@ -3,6 +3,7 @@ import time
 import csv
 import shutil
 from pathlib import Path
+import argparse
 from typing import List, Optional
 
 # Protocol constants
@@ -117,31 +118,6 @@ def open_serial():
     return serial.Serial(SERIAL_PORT, baudrate=SERIAL_BAUD, bytesize=8,
                          parity='N', stopbits=1, timeout=1)
 
-# Open the serial port
-ser = open_serial()
-
-# Build polling and go commands
-poll_cmd = build_block(b'?C')  # request CTG block
-go_cmd = build_block(b'G')     # enable auto-send mode
-
-print("Starting in polling mode...")
-
-got_data = False
-while not got_data:
-    # Send a polling request
-    ser.write(poll_cmd)
-    time.sleep(1.0)
-
-    data = ser.read(256)
-    if data:
-        print("Received CTG data block (polling):", data.hex(' '))
-        got_data = True
-
-# Switch to auto-send mode
-ser.write(go_cmd)
-print("Sent 'G' command, monitor should now auto-send data every second.")
-
-
 def ensure_space_and_limit():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     csv_files = sorted(DATA_DIR.glob("ctg_frames_*.csv"), key=lambda p: p.stat().st_mtime)
@@ -164,47 +140,84 @@ def open_csv_for_hour(ts: float):
     print(f"Writing frames to {csv_path}")
     return csv_file, csv_writer, hour_stamp
 
-csv_file, csv_writer, current_hour_stamp = open_csv_for_hour(time.time())
+def main():
+    parser = argparse.ArgumentParser(description="Read CTG frames from serial.")
+    parser.add_argument("--print-frames", action="store_true",
+                        help="Print payload hex for each valid frame.")
+    args = parser.parse_args()
 
-# Continuous read loop
-try:
-    buffer = bytearray()
-    ok_frames = 0
-    bad_frames = 0
-    space_check_counter = 0
-    while True:
-        try:
-            data = ser.read(512)
-        except serial.SerialException as exc:
-            print(f"Serial error: {exc}; retrying in 2s...")
-            try:
-                ser.close()
-            except Exception:
-                pass
-            time.sleep(2)
-            ser = open_serial()
-            continue
+    # Open the serial port
+    ser = open_serial()
+
+    # Build polling and go commands
+    poll_cmd = build_block(b'?C')  # request CTG block
+    go_cmd = build_block(b'G')     # enable auto-send mode
+
+    print("Starting in polling mode...")
+
+    got_data = False
+    while not got_data:
+        # Send a polling request
+        ser.write(poll_cmd)
+        time.sleep(1.0)
+
+        data = ser.read(256)
         if data:
-            buffer.extend(data)
-            for frame in extract_frames(buffer):
-                payload = validate_frame(frame)
-                if payload is None:
-                    bad_frames += 1
-                    print("Frame CRC FAIL:", frame.hex(" "))
-                    continue
-                ok_frames += 1
-                now = time.time()
-                hour_stamp = time.strftime("%Y%m%d_%H00", time.localtime(now))
-                if hour_stamp != current_hour_stamp:
-                    csv_file.close()
-                    csv_file, csv_writer, current_hour_stamp = open_csv_for_hour(now)
-                space_check_counter += 1
-                if space_check_counter >= 100:
-                    ensure_space_and_limit()
-                    space_check_counter = 0
-                csv_writer.writerow([now, len(payload), payload.hex(" ")])
-                print(f"Frame OK #{ok_frames} (bad {bad_frames}): len={len(payload)}")
-except KeyboardInterrupt:
-    pass
-finally:
-    csv_file.close()
+            print("Received CTG data block (polling):", data.hex(' '))
+            got_data = True
+
+    # Switch to auto-send mode
+    ser.write(go_cmd)
+    print("Sent 'G' command, monitor should now auto-send data every second.")
+
+    csv_file, csv_writer, current_hour_stamp = open_csv_for_hour(time.time())
+
+    # Continuous read loop
+    try:
+        buffer = bytearray()
+        ok_frames = 0
+        bad_frames = 0
+        space_check_counter = 0
+        while True:
+            try:
+                data = ser.read(512)
+            except serial.SerialException as exc:
+                print(f"Serial error: {exc}; retrying in 2s...")
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+                time.sleep(2)
+                ser = open_serial()
+                continue
+            if data:
+                buffer.extend(data)
+                for frame in extract_frames(buffer):
+                    payload = validate_frame(frame)
+                    if payload is None:
+                        bad_frames += 1
+                        print("Frame CRC FAIL:", frame.hex(" "))
+                        continue
+                    ok_frames += 1
+                    now = time.time()
+                    hour_stamp = time.strftime("%Y%m%d_%H00", time.localtime(now))
+                    if hour_stamp != current_hour_stamp:
+                        csv_file.close()
+                        csv_file, csv_writer, current_hour_stamp = open_csv_for_hour(now)
+                    space_check_counter += 1
+                    if space_check_counter >= 100:
+                        ensure_space_and_limit()
+                        space_check_counter = 0
+                    payload_hex = payload.hex(" ")
+                    csv_writer.writerow([now, len(payload), payload_hex])
+                    if args.print_frames:
+                        print(f"Frame OK #{ok_frames} (bad {bad_frames}): len={len(payload)} payload={payload_hex}")
+                    else:
+                        print(f"Frame OK #{ok_frames} (bad {bad_frames}): len={len(payload)}")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        csv_file.close()
+
+if __name__ == "__main__":
+    main()
