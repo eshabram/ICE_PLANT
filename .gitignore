@@ -3,6 +3,8 @@
 **/*.log
 **/*.tmp
 **/*.bak
+**/*venv/
+**/*__pycache__/
 cert/
 **/*AGENTS.md
 data/

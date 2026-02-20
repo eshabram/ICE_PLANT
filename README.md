@@ -155,7 +155,7 @@ minicom -D /dev/serial0 -b 1200
 ```
 
 ### Verify Framing (Philips-style blocks)
-The Philips framing uses DLE/STX at the start and DLE/ETX before the CRC.
+The Philips-style framing uses DLE/STX at the start and DLE/ETX before the CRC.
 1) Capture a short burst at the working baud:
 ```sh
 hexdump -C /dev/serial0 | head -n 50
@@ -164,3 +164,35 @@ hexdump -C /dev/serial0 | head -n 50
 - Start of block: `10 02` (DLE STX)
 - End of block: `10 03` (DLE ETX), followed by 2 CRC bytes
 If you see `10 02 ... 10 03 xx xx` repeating, the framing matches.
+
+## Getting Data
+The CTG logger writes hourly CSVs into `ICE_PLANT/data/` on the Pi. The simplest way to fetch them is `rsync` over SSH.
+
+Example (run on your laptop):
+```bash
+rsync -avz pi@<pi-hostname-or-ip>:~/ICE_PLANT/data/ ./ # Copies to local directory
+```
+
+## CTG Payload Map (Philips Series 50)
+These notes are extracted from `doc/Philips_Series_50_-_Programmers_guide.pdf` (CTG Data Block "C"), of which our Corometrics machine uses as it's data format. The payload in our CSV includes the block type byte `0x43` ('C') followed by the C-data block fields.
+
+Payload layout (byte offsets are within the payload array):
+- Byte 0: Block type (`'C'` / `0x43`)
+- Bytes 1-2: Status (2 bytes)
+- Bytes 3-10: HR1 samples (4 x 2 bytes, oldest -> newest)
+- Bytes 11-18: HR2 samples (4 x 2 bytes, oldest -> newest)
+- Bytes 19-26: MHR samples (4 x 2 bytes, oldest -> newest)
+- Bytes 27-30: Toco samples (4 x 1 byte, oldest -> newest)
+- Bytes 31-32: HR-Mode (2 bytes)
+- Byte 33: Toco-Mode (1 byte)
+- Byte 34: FSpO2 value (1 byte; protocol rev dependent)
+
+Field meaning and scaling:
+- Heart rate values are 11-bit unsigned with 0.25 bpm resolution (0..1200 => 0..300 bpm; 0 means "blank trace").
+- Toco values are 8-bit, 0..127 with 0.5 resolution (stored as 0..255, represented 0..127).
+- HR1/HR2/MHR fields include quality and status bits (see Tables 3-6 and 3-7 in the Philips guide).
+- Toco and HR modes are encoded bitfields (see Tables 3-9 through 3-11).
+
+Notes:
+- HR1/HR2/MHR/Toco are sampled 4 times per second; each C block carries 4 samples.
+- The monitor should be polled every 900-1100 ms to avoid missing samples in non-auto mode.
