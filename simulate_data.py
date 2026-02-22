@@ -4,7 +4,7 @@ import random
 import time
 from pathlib import Path
 
-DATA_DIR = Path("data")
+DATA_DIR = Path("/home/pi/ICE_PLANT/data")
 SAMPLE_RATE = 4.0
 BLOCK_INTERVAL = 1.0
 
