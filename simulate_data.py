@@ -46,9 +46,10 @@ def contraction_factor(t: float) -> float:
 BASELINE_HR1 = 140.0
 BASELINE_HR2 = 135.0
 BASELINE_MHR = 80.0
+BASELINE_SPO2 = 98.0
 
 def build_payload() -> bytes:
-    global BASELINE_HR1, BASELINE_HR2, BASELINE_MHR
+    global BASELINE_HR1, BASELINE_HR2, BASELINE_MHR, BASELINE_SPO2
     payload = bytearray()
     payload.append(ord("S"))
     payload.extend([0x80, 0x00])
@@ -56,6 +57,7 @@ def build_payload() -> bytes:
     hr1 = []
     hr2 = []
     mhr = []
+    last_mhr = BASELINE_MHR
     for i in range(4):
         t = time.time() + i / SAMPLE_RATE
         cf = contraction_factor(t)
@@ -69,12 +71,13 @@ def build_payload() -> bytes:
         # HR2: subtle late decelerations (delay by ~5s).
         cf_late = contraction_factor(t - 5.0)
         hr2_val = BASELINE_HR2 - 10.0 * cf_late + random.uniform(-1.5, 1.5)
-        # MHR: steady adult rate with low variance.
-        mhr_val = BASELINE_MHR + random.uniform(-0.8, 0.8)
+        # MHR: steady adult rate with mild rise during contractions.
+        mhr_val = BASELINE_MHR + 2.0 * cf + random.uniform(-0.8, 0.8)
 
         hr1.append(clamp(hr1_val, 110.0, 170.0))
         hr2.append(clamp(hr2_val, 100.0, 165.0))
         mhr.append(clamp(mhr_val, 60.0, 110.0))
+        last_mhr = mhr[-1]
 
     for bpm in hr1:
         payload.extend(encode_hr_sample(bpm, quality=2, fmp=0))
@@ -88,7 +91,10 @@ def build_payload() -> bytes:
 
     payload.extend([0x21, 0x10])
     payload.append(0x04)
-    payload.append(0x00)
+    # FSpO2: mild random-walk around 96-99 with slight dip tracking MHR.
+    BASELINE_SPO2 = smooth_step(BASELINE_SPO2, 0.2, 94.0, 100.0)
+    spo2_val = BASELINE_SPO2 - 0.03 * (last_mhr - BASELINE_MHR) + random.uniform(-0.3, 0.3)
+    payload.append(int(round(clamp(spo2_val, 90.0, 100.0))))
     return bytes(payload)
 
 def main() -> None:
