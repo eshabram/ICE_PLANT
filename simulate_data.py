@@ -18,35 +18,63 @@ def encode_hr_sample(bpm: float, quality: int, fmp: int) -> bytes:
     lo = value & 0xFF
     return bytes([hi, lo])
 
-def generate_hr_series(base: float, amp: float, drift: float, phase: float, count: int) -> list[float]:
-    out = []
-    for i in range(count):
-        t = time.time() + i / SAMPLE_RATE
-        val = base + amp * math.sin(t * 2.0 * math.pi * drift + phase)
-        val += random.uniform(-2.0, 2.0)
-        out.append(clamp(val, 60.0, 200.0))
-    return out
+def smooth_step(value: float, step: float, lo: float, hi: float) -> float:
+    return clamp(value + random.uniform(-step, step), lo, hi)
 
 def generate_toco_series(base: float, count: int) -> list[int]:
     out = []
     for i in range(count):
         t = time.time() + i / SAMPLE_RATE
-        wave = 10.0 * math.sin(t * 2.0 * math.pi * 0.02)
+        wave = 6.0 * math.sin(t * 2.0 * math.pi * 0.015)
         bump = 0.0
-        if int(t) % 90 < 10:
-            bump = 30.0 * math.sin((t % 10) * math.pi / 10.0)
-        val = clamp(base + wave + bump + random.uniform(-1.0, 1.0), 0.0, 127.0)
+        # Contraction: ~20s rise/fall every ~60s.
+        if int(t) % 60 < 20:
+            bump = 50.0 * math.sin((t % 20) * math.pi / 20.0)
+        val = clamp(base + wave + bump + random.uniform(-0.5, 0.5), 0.0, 127.0)
         out.append(int(round(val)))
     return out
 
+def contraction_factor(t: float) -> float:
+    phase = t % 60.0
+    if phase >= 20.0:
+        return 0.0
+    # Asymmetric rise/fall for a more realistic contraction shape.
+    rise = phase / 8.0
+    fall = (20.0 - phase) / 12.0
+    return min(rise, fall)
+
+BASELINE_HR1 = 140.0
+BASELINE_HR2 = 135.0
+BASELINE_MHR = 80.0
+
 def build_payload() -> bytes:
+    global BASELINE_HR1, BASELINE_HR2, BASELINE_MHR
     payload = bytearray()
     payload.append(ord("S"))
     payload.extend([0x80, 0x00])
 
-    hr1 = generate_hr_series(140.0, 8.0, 0.03, 0.0, 4)
-    hr2 = generate_hr_series(130.0, 6.0, 0.035, 1.2, 4)
-    mhr = generate_hr_series(80.0, 4.0, 0.02, 2.4, 4)
+    hr1 = []
+    hr2 = []
+    mhr = []
+    for i in range(4):
+        t = time.time() + i / SAMPLE_RATE
+        cf = contraction_factor(t)
+        # Slow random-walk baselines.
+        BASELINE_HR1 = smooth_step(BASELINE_HR1, 0.4, 120.0, 160.0)
+        BASELINE_HR2 = smooth_step(BASELINE_HR2, 0.5, 115.0, 155.0)
+        BASELINE_MHR = smooth_step(BASELINE_MHR, 0.3, 65.0, 95.0)
+
+        # HR1: mild accelerations during contractions.
+        hr1_val = BASELINE_HR1 + 6.0 * cf + random.uniform(-1.0, 1.0)
+        # HR2: subtle late decelerations (delay by ~5s).
+        cf_late = contraction_factor(t - 5.0)
+        hr2_val = BASELINE_HR2 - 10.0 * cf_late + random.uniform(-1.5, 1.5)
+        # MHR: steady adult rate with low variance.
+        mhr_val = BASELINE_MHR + random.uniform(-0.8, 0.8)
+
+        hr1.append(clamp(hr1_val, 110.0, 170.0))
+        hr2.append(clamp(hr2_val, 100.0, 165.0))
+        mhr.append(clamp(mhr_val, 60.0, 110.0))
 
     for bpm in hr1:
         payload.extend(encode_hr_sample(bpm, quality=2, fmp=0))
