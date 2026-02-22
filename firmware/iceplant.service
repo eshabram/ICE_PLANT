@@ -1,5 +1,5 @@
 [Unit]
-Description=ICE_PLANT remote data collector for Philips Series 50 fetal monitoring device
+Description=ICE_PLANT remote data collector for Corometrics 250cx fetal monitoring machine
 After=network-online.target
 Wants=network-online.target
 

@@ -166,12 +166,36 @@ hexdump -C /dev/serial0 | head -n 50
 If you see `10 02 ... 10 03 xx xx` repeating, the framing matches.
 
 ## Getting Data
-The CTG logger writes hourly CSVs into `ICE_PLANT/data/` on the Pi. The simplest way to fetch them is `rsync` over SSH.
+The CTG logger writes hourly CSVs into `ICE_PLANT/data/` on the Pi. You can fetch the data manually from a terminal using `rsync` over SSH as long as you are still in the tailscale network.
 
 Example (run on your laptop):
 ```bash
 rsync -avz pi@<pi-hostname-or-ip>:~/ICE_PLANT/data/ ./ # Copies to local directory
 ```
+
+The simplest and best way to get data is by using the dedicated ICE_PLANT_VIEWER application found [HERE](https://github.com/eshabram/ICE_PLANT_VIEWER). That application will allow you to not only download the files, but also to visualize data collection in real-time. 
+
+## Simulated Data
+You can generate simulated CTG data on the remote machine to exercise the plotter without hardware for testing and debugging purposes. This is the recommended approach for development of the [ICE_PLANT_VIEWER](https://github.com/eshabram/ICE_PLANT_VIEWER) application.
+
+Start the simulator in the background:
+```bash
+python3 simulate_data.py &
+```
+
+Tail the newest simulated CSV:
+```bash
+tail -f "$(ls -t data/ctg_frames_sim_*.csv | head -n1)"
+```
+
+Simulated data will be labeled with 'sim' in the name, as well as an 'S' instead of the standard 'C' at the start of the payload data (incase we rename the file). NOTE that these sim csv files are not downloaded when using the ICE_PLANT_VIEWER to keep that data clean. If the simulated data is needed, the `rsync` method can still be used.  
+
+## Data File Behavior (Hourly Rotation)
+`ice_plant.py` writes CSV logs into `data/` and rotates them hourly. A file is created on startup (header only), and subsequent hourly files are only created when at least one valid frame arrives in that hour.
+
+Interpretation tips: 
+- **Corometrics off or disconnected**: no CTG frames arrive; the current hour file stays at just the header and no new hourly files appear.
+- **Corometrics on but no valid signal**: CTG frames still arrive, but HR/Toco values are often zero/blank.
 
 ## CTG Payload Map (Philips Series 50)
 These notes are extracted from `doc/Philips_Series_50_-_Programmers_guide.pdf` (CTG Data Block "C"), of which our Corometrics machine uses as it's data format. The payload in our CSV includes the block type byte `0x43` ('C') followed by the C-data block fields.
