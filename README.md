@@ -110,7 +110,7 @@ sudo reboot
 Once the board has network connection, run this:
 ```sh
 sudo apt update
-sudo apt install python3-serial
+sudo apt install python3-serial 
 ```
 
 ## Tailscale:
@@ -137,6 +137,8 @@ sudo rm -rf /var/lib/tailscale/*
 ```
 
 ## Debug Instructions
+NOTE: the baud has been found to be 1200. Debug instructions remain as a good example for future debugging of the serial connections. 
+
 Currently, the serial to TTL is working on the RPI. The Philips protocol uses 1200 baud, but the Corometrics default is 2400 baud. Use this quick check to see which baud is active:
 ```sh
 stty -F /dev/serial0 -a # view current settings

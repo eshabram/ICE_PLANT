@@ -92,9 +92,14 @@ def build_payload() -> bytes:
     payload.extend([0x21, 0x10])
     payload.append(0x04)
     # FSpO2: mild random-walk around 96-99 with slight dip tracking MHR.
-    BASELINE_SPO2 = smooth_step(BASELINE_SPO2, 0.05, 94.0, 100.0)
-    spo2_val = BASELINE_SPO2 - 0.02 * (last_mhr - BASELINE_MHR) + random.uniform(-0.1, 0.1)
-    payload.append(int(round(clamp(spo2_val, 90.0, 100.0))))
+    BASELINE_SPO2 = smooth_step(BASELINE_SPO2, 0.05, 94.0, 99.0)
+    # Adverse event: brief dip every ~180s for ~12s.
+    t = time.time()
+    event_dip = 0.0
+    if int(t) % 180 < 12:
+        event_dip = 3.0 * math.sin((t % 12) * math.pi / 12.0)
+    spo2_val = BASELINE_SPO2 - 0.02 * (last_mhr - BASELINE_MHR) - event_dip + random.uniform(-0.1, 0.1)
+    payload.append(int(round(clamp(spo2_val, 92.0, 99.0))))
     return bytes(payload)
 
 def main() -> None:
