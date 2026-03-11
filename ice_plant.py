@@ -114,6 +114,7 @@ def validate_frame(frame: bytes) -> Optional[bytes]:
 SERIAL_PORT = '/dev/serial0'
 SERIAL_BAUD = 1200
 IDLE_RECOVERY_SECONDS = 5
+POLL_INTERVAL_SECONDS = 1.0
 
 def open_serial():
     return serial.Serial(SERIAL_PORT, baudrate=SERIAL_BAUD, bytesize=8,
@@ -124,7 +125,7 @@ def start_streaming(ser, poll_cmd: bytes, go_cmd: bytes) -> bytearray:
     print("Starting in polling mode...")
     while True:
         ser.write(poll_cmd)
-        time.sleep(1.0)
+        time.sleep(POLL_INTERVAL_SECONDS)
         data = ser.read(256)
         if data:
             print("Received CTG data block (polling):", data.hex(' '))
@@ -179,7 +180,12 @@ def main():
         space_check_counter = 0
         last_rx_time = time.time()
         last_recovery_attempt = 0.0
+        last_poll_time = time.time()
         while True:
+            loop_started = time.time()
+            if loop_started - last_poll_time >= POLL_INTERVAL_SECONDS:
+                ser.write(poll_cmd)
+                last_poll_time = loop_started
             try:
                 data = ser.read(512)
             except serial.SerialException as exc:
@@ -193,6 +199,7 @@ def main():
                 buffer = start_streaming(ser, poll_cmd, go_cmd)
                 last_rx_time = time.time()
                 last_recovery_attempt = 0.0
+                last_poll_time = time.time()
                 continue
             if data:
                 last_rx_time = time.time()
@@ -227,6 +234,7 @@ def main():
                     buffer = start_streaming(ser, poll_cmd, go_cmd)
                     last_rx_time = time.time()
                     last_recovery_attempt = now
+                    last_poll_time = time.time()
     except KeyboardInterrupt:
         pass
     finally:
