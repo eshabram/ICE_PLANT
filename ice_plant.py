@@ -113,10 +113,25 @@ def validate_frame(frame: bytes) -> Optional[bytes]:
 
 SERIAL_PORT = '/dev/serial0'
 SERIAL_BAUD = 1200
+IDLE_RECOVERY_SECONDS = 5
 
 def open_serial():
     return serial.Serial(SERIAL_PORT, baudrate=SERIAL_BAUD, bytesize=8,
                          parity='N', stopbits=1, timeout=1)
+
+def start_streaming(ser, poll_cmd: bytes, go_cmd: bytes) -> bytearray:
+    """Poll until the monitor responds, then request auto-send mode."""
+    print("Starting in polling mode...")
+    while True:
+        ser.write(poll_cmd)
+        time.sleep(1.0)
+        data = ser.read(256)
+        if data:
+            print("Received CTG data block (polling):", data.hex(' '))
+            ser.write(go_cmd)
+            print("Sent 'G' command, monitor should now auto-send data every second.")
+            return bytearray(data)
+        print("No CTG data received from poll; retrying...")
 
 def ensure_space_and_limit():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -153,31 +168,17 @@ def main():
     poll_cmd = build_block(b'?C')  # request CTG block
     go_cmd = build_block(b'G')     # enable auto-send mode
 
-    print("Starting in polling mode...")
-
-    got_data = False
-    while not got_data:
-        # Send a polling request
-        ser.write(poll_cmd)
-        time.sleep(1.0)
-
-        data = ser.read(256)
-        if data:
-            print("Received CTG data block (polling):", data.hex(' '))
-            got_data = True
-
-    # Switch to auto-send mode
-    ser.write(go_cmd)
-    print("Sent 'G' command, monitor should now auto-send data every second.")
+    buffer = start_streaming(ser, poll_cmd, go_cmd)
 
     csv_file, csv_writer, current_hour_stamp = open_csv_for_hour(time.time())
 
     # Continuous read loop
     try:
-        buffer = bytearray()
         ok_frames = 0
         bad_frames = 0
         space_check_counter = 0
+        last_rx_time = time.time()
+        last_recovery_attempt = 0.0
         while True:
             try:
                 data = ser.read(512)
@@ -189,8 +190,12 @@ def main():
                     pass
                 time.sleep(2)
                 ser = open_serial()
+                buffer = start_streaming(ser, poll_cmd, go_cmd)
+                last_rx_time = time.time()
+                last_recovery_attempt = 0.0
                 continue
             if data:
+                last_rx_time = time.time()
                 buffer.extend(data)
                 for frame in extract_frames(buffer):
                     payload = validate_frame(frame)
@@ -215,6 +220,13 @@ def main():
                         print(f"Frame OK #{ok_frames} (bad {bad_frames}): len={len(payload)} payload={payload_hex}")
                     else:
                         print(f"Frame OK #{ok_frames} (bad {bad_frames}): len={len(payload)}")
+            elif time.time() - last_rx_time >= IDLE_RECOVERY_SECONDS:
+                now = time.time()
+                if now - last_recovery_attempt >= IDLE_RECOVERY_SECONDS:
+                    print("No serial data received for 5s; retrying poll/go handshake...")
+                    buffer = start_streaming(ser, poll_cmd, go_cmd)
+                    last_rx_time = time.time()
+                    last_recovery_attempt = now
     except KeyboardInterrupt:
         pass
     finally:

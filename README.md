@@ -116,6 +116,30 @@ sudo apt install python3-serial
 ## Tailscale:
 Tailscale is a VPN service that securely connects your devices into a private, peer-to-peer network using WireGuard, without manual firewall or port setup. It allows for remote managing and access of device, even in enterprise networks. 
 
+### Switching this embedded device to a different Tailscale tailnet
+
+This device is headless, so the clean way to move it to a different Tailscale network is to use an auth key generated from the **target** tailnet.
+
+Generate a key from the target tailnet from another machine with a browser:
+- Sign in to the target Tailscale tailnet
+- Open the **Keys** page
+- Generate an auth key with these settings:
+  - **Reusable**: ON
+  - **Pre-approved**: ON
+  - **Ephemeral**: OFF
+  - **Tag**: `tag:embedded`
+
+Example key format:
+
+```bash
+tskey-xxxxxxxxxxxxxxxx
+```
+Now switch networks using these commands using the key you generated in place of the "xxxxxxxxxxxxxxxx":
+```
+sudo tailscale logout
+sudo tailscale up --auth-key=tskey-xxxxxxxxxxxxxxxx --advertise-tags=tag:embedded
+```
+
 ### Installation and setup:
 Run these commands to install and enable tailscale:
 ```bash
