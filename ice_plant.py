@@ -210,6 +210,7 @@ def main():
                         space_check_counter = 0
                     payload_hex = payload.hex(" ")
                     csv_writer.writerow([now, len(payload), payload_hex])
+                    csv_file.flush()
                     if args.print_frames:
                         print(f"Frame OK #{ok_frames} (bad {bad_frames}): len={len(payload)} payload={payload_hex}")
                     else:

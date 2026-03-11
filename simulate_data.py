@@ -8,6 +8,15 @@ DATA_DIR = Path("/home/pi/ICE_PLANT/data")
 SAMPLE_RATE = 4.0
 BLOCK_INTERVAL = 1.0
 
+def open_csv_for_hour(ts: float):
+    hour_stamp = time.strftime("%Y%m%d_%H00", time.localtime(ts))
+    csv_path = DATA_DIR / f"ctg_frames_sim_{hour_stamp}.csv"
+    csv_file = open(csv_path, "w", newline="")
+    csv_writer = csv.writer(csv_file)
+    csv_writer.writerow(["timestamp", "payload_len", "payload_hex"])
+    print(f"Writing simulated data to {csv_path}")
+    return csv_file, csv_writer, hour_stamp
+
 def clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
@@ -104,16 +113,20 @@ def build_payload() -> bytes:
 
 def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    csv_path = DATA_DIR / time.strftime("ctg_frames_sim_%Y%m%d_%H%M%S.csv")
-    with open(csv_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["timestamp", "payload_len", "payload_hex"])
-        print(f"Writing simulated data to {csv_path}")
+    csv_file, writer, current_hour = open_csv_for_hour(time.time())
+    try:
         while True:
+            now = time.time()
+            hour_stamp = time.strftime("%Y%m%d_%H00", time.localtime(now))
+            if hour_stamp != current_hour:
+                csv_file.close()
+                csv_file, writer, current_hour = open_csv_for_hour(now)
             payload = build_payload()
-            writer.writerow([time.time(), len(payload), payload.hex(" ")])
-            f.flush()
+            writer.writerow([now, len(payload), payload.hex(" ")])
+            csv_file.flush()
             time.sleep(BLOCK_INTERVAL)
+    finally:
+        csv_file.close()
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,156 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{parskip}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage[colorlinks=true,urlcolor=blue,linkcolor=blue]{hyperref}
+
+\title{ICE\_PLANT Project Documentation}
+\author{Elliot Shabram\\Primary Contact: \texttt{elliotshabram@gmail.com}\\Institutional Contact: \texttt{egshabram@ucdavis.edu}}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+This project is a live monitoring and data collection USB dongle for the Corometrics 250cx monitor. It is split into two repositories: \texttt{ICE\_PLANT}, which is the embedded code for the remote monitoring USB dongle running on a Raspberry Pi Zero 2 W, and \texttt{ICE\_PLANT\_VIEWER}, which is the desktop client that connects remotely and visualizes data in real time. Philips Series 50 material is used only as a protocol reference for framing and payload interpretation; the actual monitored device is the Corometrics unit.
+
+\subsection*{Repositories}
+The source code for both parts of the project is hosted on GitHub:
+\begin{itemize}
+\item ICE\_PLANT: \href{https://github.com/eshabram/ICE_PLANT}{ICE\_PLANT GitHub Repository}
+\item ICE\_PLANT\_VIEWER: \href{https://github.com/eshabram/ICE_PLANT_VIEWER}{ICE\_PLANT\_VIEWER GitHub Repository}
+\end{itemize}
+
+\section{Embedded Device (ICE\_PLANT) and Wiring}
+The embedded side is the monitor-connected runtime that performs serial capture and logging on the Raspberry Pi. It opens the Corometrics serial stream, assembles protocol frames from incoming bytes, verifies frame integrity with delimiter and CRC checks, and writes accepted payloads to local CSV files. The output format is intentionally simple so downstream tools can decode it deterministically.
+
+In practice, this component handles startup polling, switches the monitor session into periodic streaming mode, and then runs continuously as a recorder. It rotates files by hour and enforces file-count and free-space limits to protect storage. Because logging is local to the Pi, data collection continues even when it is not connected to the network.
+
+\subsection*{Physical Signal Path}
+The hardware chain is:
+\begin{verbatim}
+Corometrics 250cx -> custom RJ-11/DB9 cable -> MAX3232 -> Pi Zero 2 W UART/TTL Serial
+\end{verbatim}
+
+The custom cable maps the Corometrics communication pins onto the DB9 interface used by the MAX3232 board.
+
+\begin{longtable}{|>{\raggedright\arraybackslash}p{0.34\linewidth}|>{\raggedright\arraybackslash}p{0.22\linewidth}|>{\raggedright\arraybackslash}p{0.34\linewidth}|}
+\hline
+\textbf{Corometrics RJ-11} & \textbf{DB9 Pin} & \textbf{Use} \\
+\hline
+Pin 5 (TXD) & 2 (RXD) & Monitor transmit to host receive \\
+\hline
+Pin 2 (RXD) & 3 (TXD) & Host transmit to monitor receive \\
+\hline
+Pin 3 or 4 (GND) & 5 (GND) & Signal ground reference \\
+\hline
+Pin 1 (RTS, optional) & 7 (RTS) & Optional hardware flow control \\
+\hline
+Pin 6 (CTS, optional) & 8 (CTS) & Optional hardware flow control \\
+\hline
+\end{longtable}
+
+On the TTL side, MAX3232 TX goes to Pi GPIO15 (RXD0), MAX3232 RX goes to Pi GPIO14 (TXD0), and ground is shared. The board is only used for voltage-domain translation between RS-232 and 3.3V UART. Another style connector could have been chosen, but I went with this one because it felt like the most straight forward way to get data in through serial. 
+
+\subsection*{Embedded Runtime Behavior}
+The main runtime is \texttt{ice\_plant.py}, which is setup as a Linux service and will start on boot. At startup, it opens \texttt{/dev/serial0} and enters a polling phase by sending a CTG request block. When data is first observed, it sends the monitor command that enables periodic auto-send behavior and transitions into continuous ingest mode.
+
+In continuous mode, bytes are read into a rolling buffer. The parser searches for start and end delimiters, extracts complete frames, validates CRC-16, and de-escapes DLE-stuffed bytes. Invalid frames are discarded and counted. Valid payloads are written to CSV immediately.
+
+Operationally, this creates a simple state machine: startup, poll-until-data, switch-to-stream, then stream-validate-log forever.
+
+\subsection*{Protocol Handling at the Embedded Layer}
+Framing handled by the logger is:
+\begin{verbatim}
+DLE STX <escaped payload> DLE ETX <CRC16>
+\end{verbatim}
+
+CRC is computed over the full framed block up to and including \texttt{DLE ETX}, and then compared to the trailing two-byte CRC field. Payload bytes are logged only after frame integrity passes.
+
+The embedded logger writes raw payload bytes exactly as needed for deterministic decode in the viewer. This is intentional: the logger does transport validation and durable storage, while semantic interpretation is left to the viewer.
+
+\subsection*{Data Contract and File Layout}
+CSV output schema is fixed:
+\begin{verbatim}
+timestamp,payload_len,payload_hex
+\end{verbatim}
+
+Example file naming:
+\begin{verbatim}
+ctg_frames_YYYYMMDD_HH00.csv
+\end{verbatim}
+
+Rotation is hourly. A new file is opened each hour boundary. Disk management enforces two limits: a maximum file count and a minimum free-space threshold. If limits are exceeded, oldest files are deleted first (FIFO).
+
+This makes behavior predictable in long-running deployments on limited SD storage. It also offers some flexibility in choosing how much data you want to keep, as there are safeguards in place for choosing too much, while allowing for larger cards to be utilized. 
+
+\subsection*{Embedded Deployment and Services}
+The \texttt{firmware/} folder contains setup scripts and unit files used during provisioning.
+\texttt{setup.sh} moves assets into runtime locations, enables system services, and configures serial gadget access. USB gadget scripts support direct tethered management workflows. For creating a new Linux image from scratch, see the ICE\_PLANT repository's README.md. 
+
+In practice, deployment has two modes: interactive development (manual \texttt{python3 ice\_plant.py}) and service mode (systemd-managed startup on boot).
+
+\subsection*{Simulation for Development}
+\texttt{simulate\_data.py} generates protocol-compatible synthetic payloads into \texttt{ctg\_frames\_sim\_*.csv}. This allows viewer-side UI and decode work when no monitor is connected.
+
+The simulator purposely mirrors the live CSV contract so downstream code does not need a special parser path. It alsow simulates some simple contractions and changes in BPM, as well as some mixed in randomness. 
+
+\subsection*{Embedded Failure Behavior}
+If the serial device throws an exception, the process closes the port, waits briefly, and retries opening the interface. CRC failures do not crash the process; frames are dropped and logging continues. If no new data arrives, the process remains alive and keeps reading.
+
+The logger is designed to fail soft at frame level and continue running through no-data conditions (for example monitor power cycles or temporary link loss), while attempting serial-port recovery on read errors.
+
+\section{ICE\_PLANT\_VIEWER Application}
+The viewer is the analysis/visualization side. It does not talk to the monitor directly. It consumes the embedded CSV stream over SSH. To connect to the ICE\_PLANT device, you must be on the same network. That means that for remote monitoring, some kind of VPN will need to be used. Currently, the setup script installs tailscale for this, with instructions on how to add the device to your personal network in the ICE\_PLANT README.md. Once on the same network, enter the hostname and IP as you would an SSH command. Ex:
+
+\begin{verbatim}
+    pi@10.0.0.1
+\end{verbatim}
+The application will save your previously connected remote device and auto-reconnect for your convenience.
+
+\subsection*{Remote Stream Pipeline}
+The viewer starts by connecting to the Pi host, locating the newest CSV in \texttt{/home/pi/ICE\_PLANT/data}, and tailing appended lines. This is done in a worker path so the UI remains responsive.
+
+When hourly rotation occurs on the embedded side, the viewer detects the new latest file and switches stream source. Optional prefill logic can load recent history before live tailing starts, which avoids an empty chart on startup.
+
+\subsection*{Parsing and Decode Behavior}
+Each CSV line is split into timestamp, payload length, and payload hex bytes. The parser rejects malformed rows, enforces the payload length when provided, and filters payload type bytes.
+
+Current supported block identifiers include live CTG and simulator blocks. Channel extraction then decodes HR1, HR2, MHR, and TOCO values from payload offsets.
+
+Heart-rate values are decoded from 11-bit fields and scaled by 0.25 bpm. TOCO values are scaled by 0.5. These scale factors are applied at decode time before plotting.
+
+\subsection*{Visualization and UI Loop}
+The UI is built with PySide6 and Matplotlib. Incoming samples are appended to time windows and rendered at a fixed refresh interval. The viewer supports separate signal views so operator focus can switch between heart-rate trends and uterine activity. This feature can be useful for monitoring both remotely, or by monitoring when directly connected to the USB serial, which is also supported. Also, a serial terminal can be accessed through the application to make that process easier for the user by avoiding long commands and looking up the exact serial port name. 
+
+Because decode and transport run continuously, the display can track new data with low perceived latency while still handling network jitter.
+
+\subsection*{Viewer Failure Behavior}
+SSH errors, remote file read errors, and malformed rows are handled without taking down the full application when possible. If connection is lost, capture on the Pi is unaffected. Reconnection resumes from the current log state.
+
+This separation prevents remote UI issues from corrupting acquisition.
+
+\subsection*{Packaging and Distribution}
+The viewer repository includes dependency pins and PyInstaller build scripts for desktop distribution, including macOS packaging scripts. I'll also provide a prebuilt installer for MacOS. For instructions on running from source or building and deploying the application, see the README.md.
+
+\section{Downloading Data}
+The Viewer application is the main mode for downloading data from the ICE\_PLANT embedded device through the top menu options. Simply click \texttt{File -> Download Data Files...} and select the file location for download. This can be done either remotely or when connected through the USB gadget serial connection (USB male). Downloading via the USB gadget is a highly useful feature that allows the monitor to function entirely off network if need be. Since this project is designed to be used with enterprise networks in mind, it was necessary to have this kind of fallback as enterprise networks vary greatly and are notoriously difficult to setup with IoT devices. If an organization suddenly switches IT departments or ISP, ICE\_PLANT will still collect data, and the viewer application can still download it. 
+
+The second mode of remotely retrieving data is via the \texttt{rsyn} command. You can use this: 
+\begin{verbatim}
+    rsync -avz pi@<pi-hostname-or-ip>:~/ICE_PLANT/data/ ./
+\end{verbatim}  
+
+\section{Future Work}
+Future work should focus on reliability and maintainability of the existing pipeline, but could also benefit from added features where desired. On the embedded side, the main gap is serial recovery: the logger should keep retrying if the serial port cannot be reopened, instead of depending on a single reopen attempt after a read failure. Configuration should also be moved out of hard-coded constants into a shared config file  of some sort so deployment changes (port, baud, host/paths, retention limits) do not require code edits. Also, the current setup is relying heavily on SSH, which is totally fine and secure, but future work into setting up TLS would be good, but this would require an always on server in the users control to handle the TLS connection and give access to users for reading that data. That setup would remove the need for a VPN, but again, it requires an always on server in our control and somewhat complex setup compared to the current one. 
+
+On the viewer side, the most useful improvements are operational: clearer reconnect behavior after SSH drops, explicit user-facing error states, and better handling around remote file rollover. For validation, the project should add a small set of regression tests built from real captured CSV payload lines so parser and decoder changes can be checked quickly before deployment.
+
+Finally, I think that the viewer application would be a great place to implement any analysis algorithms that are used with this data. The application is simply written in python, and would be easy to integrate. The user would also benefit from a real-time view of the final analysis. 
+
+These changes keep the current architecture intact while making day-to-day use more robust and easier to support.
+\end{document}
