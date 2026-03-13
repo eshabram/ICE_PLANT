@@ -74,10 +74,19 @@ def extract_frames(buffer: bytearray) -> List[bytes]:
     i = 0
     while i < len(buffer) - 1:
         if buffer[i] == DLE and buffer[i + 1] == STX:
-            # Find DLE ETX, then ensure 2 CRC bytes exist.
             j = i + 2
             while j < len(buffer) - 1:
-                if buffer[j] == DLE and buffer[j + 1] == ETX:
+                if buffer[j] != DLE:
+                    j += 1
+                    continue
+
+                next_byte = buffer[j + 1]
+                if next_byte == DLE:
+                    # Escaped DLE inside payload; consume both bytes.
+                    j += 2
+                    continue
+
+                if next_byte == ETX:
                     end = j + 2
                     if end + 2 <= len(buffer):
                         frame = bytes(buffer[i:end + 2])
@@ -85,9 +94,10 @@ def extract_frames(buffer: bytearray) -> List[bytes]:
                         i = end + 2
                         break
                     # Need more bytes for CRC.
-                    i = i
                     j = len(buffer)
                     break
+
+                # Unexpected control sequence after DLE; keep scanning.
                 j += 1
             else:
                 break
