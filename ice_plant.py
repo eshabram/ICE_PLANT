@@ -114,7 +114,9 @@ def validate_frame(frame: bytes) -> Optional[bytes]:
 SERIAL_PORT = '/dev/serial0'
 SERIAL_BAUD = 1200
 IDLE_RECOVERY_SECONDS = 5
+VALID_FRAME_RECOVERY_SECONDS = 5
 POLL_INTERVAL_SECONDS = 1.0
+MAX_BUFFER_BYTES = 4096
 
 def open_serial():
     return serial.Serial(SERIAL_PORT, baudrate=SERIAL_BAUD, bytesize=8,
@@ -134,6 +136,15 @@ def start_streaming(ser, poll_cmd: bytes, go_cmd: bytes) -> bytearray:
             return bytearray(data)
         print("No CTG data received from poll; retrying...")
 
+def recover_stream(ser, buffer: bytearray, poll_cmd: bytes, go_cmd: bytes) -> bytearray:
+    """Drop buffered junk and renegotiate streaming mode."""
+    buffer.clear()
+    try:
+        ser.reset_input_buffer()
+    except Exception:
+        pass
+    return start_streaming(ser, poll_cmd, go_cmd)
+
 def ensure_space_and_limit():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     csv_files = sorted(DATA_DIR.glob("ctg_frames_*.csv"), key=lambda p: p.stat().st_mtime)
@@ -152,9 +163,18 @@ def open_csv_for_hour(ts: float):
     csv_path = DATA_DIR / f"ctg_frames_{hour_stamp}.csv"
     csv_file = open(csv_path, "w", newline="")
     csv_writer = csv.writer(csv_file)
-    csv_writer.writerow(["timestamp", "payload_len", "payload_hex"])
+    csv_writer.writerow(["timestamp", "block_type", "payload_len", "payload_hex"])
     print(f"Writing frames to {csv_path}")
     return csv_file, csv_writer, hour_stamp
+
+def get_block_type(payload: bytes) -> str:
+    """Return a readable block identifier from the payload prefix."""
+    if not payload:
+        return "EMPTY"
+    first_byte = payload[0]
+    if 32 <= first_byte <= 126:
+        return chr(first_byte)
+    return f"0x{first_byte:02X}"
 
 def main():
     parser = argparse.ArgumentParser(description="Read CTG frames from serial.")
@@ -179,6 +199,7 @@ def main():
         bad_frames = 0
         space_check_counter = 0
         last_rx_time = time.time()
+        last_valid_frame_time = last_rx_time
         last_recovery_attempt = 0.0
         last_poll_time = time.time()
         while True:
@@ -198,12 +219,21 @@ def main():
                 ser = open_serial()
                 buffer = start_streaming(ser, poll_cmd, go_cmd)
                 last_rx_time = time.time()
+                last_valid_frame_time = last_rx_time
                 last_recovery_attempt = 0.0
                 last_poll_time = time.time()
                 continue
             if data:
                 last_rx_time = time.time()
                 buffer.extend(data)
+                if len(buffer) > MAX_BUFFER_BYTES:
+                    print(f"Input buffer exceeded {MAX_BUFFER_BYTES} bytes without a clean parse; retrying handshake...")
+                    buffer = recover_stream(ser, buffer, poll_cmd, go_cmd)
+                    last_rx_time = time.time()
+                    last_valid_frame_time = last_rx_time
+                    last_recovery_attempt = last_rx_time
+                    last_poll_time = last_rx_time
+                    continue
                 for frame in extract_frames(buffer):
                     payload = validate_frame(frame)
                     if payload is None:
@@ -220,21 +250,29 @@ def main():
                     if space_check_counter >= 100:
                         ensure_space_and_limit()
                         space_check_counter = 0
+                    block_type = get_block_type(payload)
                     payload_hex = payload.hex(" ")
-                    csv_writer.writerow([now, len(payload), payload_hex])
+                    csv_writer.writerow([now, block_type, len(payload), payload_hex])
                     csv_file.flush()
                     if args.print_frames:
-                        print(f"Frame OK #{ok_frames} (bad {bad_frames}): len={len(payload)} payload={payload_hex}")
+                        print(f"Frame OK #{ok_frames} (bad {bad_frames}): type={block_type} len={len(payload)} payload={payload_hex}")
                     else:
-                        print(f"Frame OK #{ok_frames} (bad {bad_frames}): len={len(payload)}")
-            elif time.time() - last_rx_time >= IDLE_RECOVERY_SECONDS:
-                now = time.time()
+                        print(f"Frame OK #{ok_frames} (bad {bad_frames}): type={block_type} len={len(payload)}")
+                    last_valid_frame_time = now
+            now = time.time()
+            no_recent_bytes = now - last_rx_time >= IDLE_RECOVERY_SECONDS
+            no_valid_frames = now - last_valid_frame_time >= VALID_FRAME_RECOVERY_SECONDS
+            if no_recent_bytes or no_valid_frames:
                 if now - last_recovery_attempt >= IDLE_RECOVERY_SECONDS:
-                    print("No serial data received for 5s; retrying poll/go handshake...")
-                    buffer = start_streaming(ser, poll_cmd, go_cmd)
+                    if no_recent_bytes:
+                        print("No serial data received for 5s; retrying poll/go handshake...")
+                    else:
+                        print("No valid CTG frames received for 5s; retrying poll/go handshake...")
+                    buffer = recover_stream(ser, buffer, poll_cmd, go_cmd)
                     last_rx_time = time.time()
+                    last_valid_frame_time = last_rx_time
                     last_recovery_attempt = now
-                    last_poll_time = time.time()
+                    last_poll_time = last_rx_time
     except KeyboardInterrupt:
         pass
     finally:

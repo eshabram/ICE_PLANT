@@ -59,9 +59,9 @@ On the TTL side, MAX3232 TX goes to Pi GPIO15 (RXD0), MAX3232 RX goes to Pi GPIO
 \subsection*{Embedded Runtime Behavior}
 The main runtime is \texttt{ice\_plant.py}, which is setup as a Linux service and will start on boot. At startup, it opens \texttt{/dev/serial0} and enters a polling phase by sending a CTG request block. When data is first observed, it sends the monitor command that enables periodic auto-send behavior and transitions into continuous ingest mode.
 
-In continuous mode, bytes are read into a rolling buffer. The parser searches for start and end delimiters, extracts complete frames, validates CRC-16, and de-escapes DLE-stuffed bytes. Invalid frames are discarded and counted. Valid payloads are written to CSV immediately.
+In continuous mode, bytes are read into a rolling buffer. The parser searches for start and end delimiters, extracts complete frames, validates CRC-16, and de-escapes DLE-stuffed bytes. Invalid frames are discarded and counted. Valid payloads of any block type are written to CSV immediately.
 
-Operationally, this creates a simple state machine: startup, poll-until-data, switch-to-stream, then stream-validate-log forever.
+Operationally, this creates a simple state machine: startup, poll-until-data, switch-to-stream, then stream-validate-log forever. If bytes continue arriving but no valid frames are produced for several seconds, the logger clears the input buffer and re-runs the poll/go handshake to recover from a malformed or unexpected stream.
 
 \subsection*{Protocol Handling at the Embedded Layer}
 Framing handled by the logger is:
@@ -71,12 +71,12 @@ DLE STX <escaped payload> DLE ETX <CRC16>
 
 CRC is computed over the full framed block up to and including \texttt{DLE ETX}, and then compared to the trailing two-byte CRC field. Payload bytes are logged only after frame integrity passes.
 
-The embedded logger writes raw payload bytes exactly as needed for deterministic decode in the viewer. This is intentional: the logger does transport validation and durable storage, while semantic interpretation is left to the viewer.
+The embedded logger writes raw payload bytes exactly as needed for deterministic decode in the viewer. This is intentional: the logger does transport validation and durable storage, while semantic interpretation is left to the viewer. The first payload byte is also surfaced as a CSV \texttt{block\_type} field so mixed payload families can be separated without re-parsing the hex string.
 
 \subsection*{Data Contract and File Layout}
 CSV output schema is fixed:
 \begin{verbatim}
-timestamp,payload_len,payload_hex
+timestamp,block_type,payload_len,payload_hex
 \end{verbatim}
 
 Example file naming:
@@ -86,7 +86,27 @@ ctg_frames_YYYYMMDD_HH00.csv
 
 Rotation is hourly. A new file is opened each hour boundary. Disk management enforces two limits: a maximum file count and a minimum free-space threshold. If limits are exceeded, oldest files are deleted first (FIFO).
 
+The logger does not filter by payload type at ingest time. Any CRC-valid payload is recorded, including standard CTG blocks (\texttt{C}), maternal oxygen saturation blocks (\texttt{S}), and other Philips-style packet families such as identification, NIBP, temperature, notes, or failure/event messages if the monitor emits them.
+
 This makes behavior predictable in long-running deployments on limited SD storage. It also offers some flexibility in choosing how much data you want to keep, as there are safeguards in place for choosing too much, while allowing for larger cards to be utilized. 
+
+\subsection*{Observed Packet Types on Corometrics 250cx}
+The dominant payload on this link is the Philips-style CTG data block \texttt{C}. On systems with maternal pulse oximetry attached, the monitor also emits an \texttt{S} block for maternal oxygen saturation. This is distinct from the protocol's \texttt{FSpO2} byte inside the \texttt{C} block, which refers to fetal oxygen saturation and is protocol-revision dependent.
+
+The observed \texttt{S} payload layout is:
+\begin{verbatim}
+Byte 0: 'S'
+Byte 1: maternal SpO2 at 0.5% resolution
+Bytes 2-3: maternal pulse rate at 0.25 bpm resolution, MSB first
+\end{verbatim}
+
+Examples:
+\begin{verbatim}
+53 be 01 54 -> 95.0% SpO2, 85.0 bpm
+53 bc 01 38 -> 94.0% SpO2, 78.0 bpm
+\end{verbatim}
+
+Unlike the once-per-second CTG polling cadence, \texttt{S} blocks should be treated as asynchronous updates. The logger records them whenever they appear, and downstream tools should hold the last known maternal SpO2 value until a new \texttt{S} block arrives or a staleness timeout is applied.
 
 \subsection*{Embedded Deployment and Services}
 The \texttt{firmware/} folder contains setup scripts and unit files used during provisioning.
@@ -100,9 +120,9 @@ In practice, deployment has two modes: interactive development (manual \texttt{p
 The simulator purposely mirrors the live CSV contract so downstream code does not need a special parser path. It alsow simulates some simple contractions and changes in BPM, as well as some mixed in randomness. 
 
 \subsection*{Embedded Failure Behavior}
-If the serial device throws an exception, the process closes the port, waits briefly, and retries opening the interface. CRC failures do not crash the process; frames are dropped and logging continues. If no new data arrives, the process remains alive and keeps reading.
+If the serial device throws an exception, the process closes the port, waits briefly, and retries opening the interface. CRC failures do not crash the process; frames are dropped and logging continues. If no new data arrives, the process remains alive and keeps reading. If bytes arrive continuously but never produce a valid frame, the logger now treats that as a recoverable fault and renegotiates the stream.
 
-The logger is designed to fail soft at frame level and continue running through no-data conditions (for example monitor power cycles or temporary link loss), while attempting serial-port recovery on read errors.
+The logger is designed to fail soft at frame level and continue running through no-data conditions (for example monitor power cycles or temporary link loss), while attempting serial-port recovery on read errors or prolonged no-valid-frame conditions.
 
 \section{ICE\_PLANT\_VIEWER Application}
 The viewer is the analysis/visualization side. It does not talk to the monitor directly. It consumes the embedded CSV stream over SSH. To connect to the ICE\_PLANT device, you must be on the same network. That means that for remote monitoring, some kind of VPN will need to be used. Currently, the setup script installs tailscale for this, with instructions on how to add the device to your personal network in the ICE\_PLANT README.md. Once on the same network, enter the hostname and IP as you would an SSH command. Ex:

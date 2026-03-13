@@ -217,14 +217,21 @@ tail -f "$(ls -t data/ctg_frames_sim_*.csv | head -n1)"
 Simulated data will be labeled with 'sim' in the name, as well as an 'S' instead of the standard 'C' at the start of the payload data (incase we rename the file). NOTE that these sim csv files are not downloaded when using the ICE_PLANT_VIEWER to keep that data clean. If the simulated data is needed, the `rsync` method can still be used.  
 
 ## Data File Behavior (Hourly Rotation)
-`ice_plant.py` writes CSV logs into `data/` and rotates them hourly. A file is created on startup (header only), and subsequent hourly files are only created when at least one valid frame arrives in that hour.
+`ice_plant.py` writes CSV logs into `data/` and rotates them hourly. The logger writes every CRC-valid payload it sees, regardless of block type (`C`, `S`, `P`, `T`, `I`, `F`, `N`, etc.). A file is created on startup (header only), and subsequent hourly files are only created when at least one valid frame arrives in that hour.
 
-Interpretation tips: 
-- **Corometrics off or disconnected**: no CTG frames arrive; the current hour file stays at just the header and no new hourly files appear.
-- **Corometrics on but no valid signal**: CTG frames still arrive, but HR/Toco values are often zero/blank.
+CSV schema:
+- `timestamp`: Unix timestamp when the frame was accepted
+- `block_type`: printable payload type byte (`C`, `S`, etc.)
+- `payload_len`: payload length in bytes
+- `payload_hex`: raw payload bytes as hex
+
+Interpretation tips:
+- **Corometrics off or disconnected**: no valid frames arrive; the current hour file stays at just the header and no new hourly files appear.
+- **Corometrics on but no valid signal**: valid `C` frames still arrive, but HR/Toco values are often zero/blank.
+- **Corrupted or unexpected serial stream**: the service stays up, but if no valid frames are parsed for 5 seconds the logger now clears the buffer and retries the poll/go handshake.
 
 ## CTG Payload Map (Philips Series 50)
-These notes are extracted from `doc/Philips_Series_50_-_Programmers_guide.pdf` (CTG Data Block "C"), of which our Corometrics machine uses as it's data format. The payload in our CSV includes the block type byte `0x43` ('C') followed by the C-data block fields.
+These notes are extracted from `doc/Philips_Series_50_-_Programmers_guide.pdf`. The Corometrics stream can contain multiple valid payload types; the most common are `C` for CTG data and `S` for maternal oxygen saturation. The payload in the CSV always includes the block type byte as its first byte.
 
 Payload layout (byte offsets are within the payload array):
 - Byte 0: Block type (`'C'` / `0x43`)
@@ -235,7 +242,7 @@ Payload layout (byte offsets are within the payload array):
 - Bytes 27-30: Toco samples (4 x 1 byte, oldest -> newest)
 - Bytes 31-32: HR-Mode (2 bytes)
 - Byte 33: Toco-Mode (1 byte)
-- Byte 34: FSpO2 value (1 byte; protocol rev dependent)
+- Byte 34: FSpO2 value (fetal oxygen saturation; protocol rev dependent)
 
 Field meaning and scaling:
 - Heart rate values are 11-bit unsigned with 0.25 bpm resolution (0..1200 => 0..300 bpm; 0 means "blank trace").
@@ -246,3 +253,24 @@ Field meaning and scaling:
 Notes:
 - HR1/HR2/MHR/Toco are sampled 4 times per second; each C block carries 4 samples.
 - The monitor should be polled every 900-1100 ms to avoid missing samples in non-auto mode.
+- The maternal finger pulse-ox input is not carried in the `C` block on this setup. It arrives as an `S` block instead.
+
+## Maternal SpO2 (`S`) Block
+The `S` block is used for maternal oxygen saturation, separate from the `C` block's fetal-SpO2 field.
+
+`S` payload layout:
+- Byte 0: Block type (`'S'` / `0x53`)
+- Byte 1: Maternal SpO2 at 0.5% resolution (`value / 2.0`)
+- Bytes 2-3: Maternal pulse rate as an 11-bit-style HR word at 0.25 bpm resolution (`value / 4.0`, big-endian)
+
+Examples:
+- `53 be 01 54` => SpO2 `190 / 2 = 95.0%`, maternal HR `0x0154 / 4 = 85.0 bpm`
+- `53 b2 02 1c` => SpO2 `178 / 2 = 89.0%`, maternal HR `0x021c / 4 = 135.0 bpm`
+
+Behavior notes:
+- `S` blocks are intermittent and should be treated as asynchronous updates, not as a fixed once-per-second stream like `C`.
+- The protocol notes used here do not define a fixed `S`-block transmit interval.
+- In downstream tools, the last known maternal SpO2 value should be held until a newer `S` block arrives or a staleness timeout is reached.
+
+## Other Packet Types
+The Philips-style protocol also defines other payload families such as `I` (identification), `P` (maternal NIBP), `T` (maternal temperature), `F` (failure), `N` (note), and `MM` (event message). ICE_PLANT does not filter these out at the logger level; any CRC-valid payload is recorded to CSV.
