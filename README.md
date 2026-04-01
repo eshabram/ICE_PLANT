@@ -274,3 +274,4 @@ Behavior notes:
 
 ## Other Packet Types
 The Philips-style protocol also defines other payload families such as `I` (identification), `P` (maternal NIBP), `T` (maternal temperature), `F` (failure), `N` (note), and `MM` (event message). ICE_PLANT does not filter these out at the logger level; any CRC-valid payload is recorded to CSV.
+

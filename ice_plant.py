@@ -14,7 +14,7 @@ POLY = 0x1021  # CCITT CRC-16
 
 # settings
 DATA_DIR = Path("data")
-MAX_CSV_FILES = 2000
+MAX_CSV_FILES = 32 * 2000
 MIN_FREE_BYTES = 250 * 1024 * 1024
 
 def crc_ccitt_bytes(data: bytes) -> bytes:
